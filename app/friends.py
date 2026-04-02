@@ -55,6 +55,13 @@ def get_user_by_username(username: str, db: Session) -> User:
     return user
 
 
+def get_username_map(user_ids: set[int], db: Session) -> dict[int, str]:
+    if not user_ids:
+        return {}
+    rows = db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()
+    return {user_id: username for user_id, username in rows}
+
+
 def are_friends(user_id: int, other_id: int, db: Session) -> bool:
     return db.query(Friendship).filter(
         or_(
@@ -213,16 +220,17 @@ def get_incoming_requests(
         FriendRequest.status == FriendRequestStatus.PENDING.value,
     ).all()
 
+    username_map = get_username_map({req.from_user_id for req in requests}, db)
+
     results = []
     for req in requests:
-        from_user = db.query(User).filter(User.id == req.from_user_id).first()
         results.append(FriendRequestResponse(
             id=req.id,
             from_user_id=req.from_user_id,
             to_user_id=req.to_user_id,
             status=req.status,
             created_at=req.created_at.isoformat(),
-            from_username=from_user.username if from_user else None,
+            from_username=username_map.get(req.from_user_id),
         ))
     return results
 
@@ -238,16 +246,17 @@ def get_outgoing_requests(
         FriendRequest.status == FriendRequestStatus.PENDING.value,
     ).all()
 
+    username_map = get_username_map({req.to_user_id for req in requests}, db)
+
     results = []
     for req in requests:
-        to_user = db.query(User).filter(User.id == req.to_user_id).first()
         results.append(FriendRequestResponse(
             id=req.id,
             from_user_id=req.from_user_id,
             to_user_id=req.to_user_id,
             status=req.status,
             created_at=req.created_at.isoformat(),
-            to_username=to_user.username if to_user else None,
+            to_username=username_map.get(req.to_user_id),
         ))
     return results
 
@@ -262,11 +271,13 @@ def list_friends(
 
     friendships = db.query(Friendship).filter(Friendship.user_id == user.id).all()
 
+    username_map = get_username_map({f.friend_id for f in friendships}, db)
+
     friends = []
     for f in friendships:
-        friend = db.query(User).filter(User.id == f.friend_id).first()
-        if friend:
-            friends.append(FriendResponse(id=friend.id, username=friend.username))
+        username = username_map.get(f.friend_id)
+        if username:
+            friends.append(FriendResponse(id=f.friend_id, username=username))
 
     return FriendListResponse(friends=friends, total=len(friends))
 
@@ -380,14 +391,15 @@ def list_blocked_users(
 
     blocks = db.query(Block).filter(Block.blocker_id == user.id).all()
 
+    username_map = get_username_map({b.blocked_id for b in blocks}, db)
+
     results = []
     for b in blocks:
-        blocked_user = db.query(User).filter(User.id == b.blocked_id).first()
         results.append(BlockResponse(
             id=b.id,
             blocker_id=b.blocker_id,
             blocked_id=b.blocked_id,
-            blocked_username=blocked_user.username if blocked_user else "unknown",
+            blocked_username=username_map.get(b.blocked_id, "unknown"),
             created_at=b.created_at.isoformat(),
         ))
     return results
@@ -434,6 +446,15 @@ def list_conversations(
         .limit(page_size) \
         .all()
 
+    other_user_ids = set()
+    for conv in conversations:
+        if conv.user1_id == user.id:
+            other_user_ids.add(conv.user2_id)
+        else:
+            other_user_ids.add(conv.user1_id)
+
+    username_map = get_username_map(other_user_ids, db)
+
     results = []
     for conv in conversations:
         if conv.user1_id == user.id:
@@ -443,11 +464,10 @@ def list_conversations(
             other_id = conv.user1_id
             unread = conv.user2_unread
 
-        other_user = db.query(User).filter(User.id == other_id).first()
         results.append(ConversationResponse(
             id=conv.id,
             other_user_id=other_id,
-            other_username=other_user.username if other_user else "unknown",
+            other_username=username_map.get(other_id, "unknown"),
             unread_count=unread,
             updated_at=conv.updated_at.isoformat(),
         ))
