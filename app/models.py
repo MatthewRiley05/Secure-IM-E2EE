@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
 from sqlalchemy.sql import func
 from app.db import Base
 import enum
@@ -84,5 +84,6 @@ class Conversation(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
+        CheckConstraint("user1_id < user2_id", name="ck_conversation_user_order"),
         UniqueConstraint("user1_id", "user2_id", name="uq_conversation"),
     )
