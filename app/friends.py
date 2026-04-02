@@ -209,7 +209,7 @@ def cancel_friend_request(
     return {"message": "Friend request cancelled"}
 
 
-@router.get("/requests/incoming")
+@router.get("/requests/incoming", response_model=list[FriendRequestResponse])
 def get_incoming_requests(
     user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
@@ -235,7 +235,7 @@ def get_incoming_requests(
     return results
 
 
-@router.get("/requests/outgoing")
+@router.get("/requests/outgoing", response_model=list[FriendRequestResponse])
 def get_outgoing_requests(
     user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
@@ -383,7 +383,7 @@ def unblock_user(
     return {"message": f"User {target.username} unblocked"}
 
 
-@router.get("/blocked")
+@router.get("/blocked", response_model=list[BlockResponse])
 def list_blocked_users(
     user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
