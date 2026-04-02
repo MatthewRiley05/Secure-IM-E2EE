@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -30,7 +30,17 @@ from app.security import check_rate_limit
 router = APIRouter(prefix="/friends", tags=["friends"])
 
 
-def get_user_from_token(token: str, db: Session) -> User:
+def get_authenticated_user(
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> User:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+
     session = get_current_session(token, db)
     user = db.query(User).filter(User.id == session.user_id).first()
     if not user:
@@ -66,8 +76,11 @@ def is_blocked(user_id: int, other_id: int, db: Session) -> bool:
 # --- Friend Request Endpoints ---
 
 @router.post("/request/send")
-def send_friend_request(data: FriendRequestSend, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def send_friend_request(
+    data: FriendRequestSend,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
     check_rate_limit(f"friend_request:{user.id}", limit=10, window_seconds=60)
 
     target = get_user_by_username(data.username, db)
@@ -118,8 +131,11 @@ def send_friend_request(data: FriendRequestSend, token: str, db: Session = Depen
 
 
 @router.post("/request/accept")
-def accept_friend_request(data: FriendRequestAction, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def accept_friend_request(
+    data: FriendRequestAction,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     request = db.query(FriendRequest).filter(
         FriendRequest.id == data.request_id,
@@ -147,8 +163,11 @@ def accept_friend_request(data: FriendRequestAction, token: str, db: Session = D
 
 
 @router.post("/request/decline")
-def decline_friend_request(data: FriendRequestAction, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def decline_friend_request(
+    data: FriendRequestAction,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     request = db.query(FriendRequest).filter(
         FriendRequest.id == data.request_id,
@@ -164,8 +183,11 @@ def decline_friend_request(data: FriendRequestAction, token: str, db: Session = 
 
 
 @router.post("/request/cancel")
-def cancel_friend_request(data: FriendRequestAction, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def cancel_friend_request(
+    data: FriendRequestAction,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     request = db.query(FriendRequest).filter(
         FriendRequest.id == data.request_id,
@@ -181,8 +203,10 @@ def cancel_friend_request(data: FriendRequestAction, token: str, db: Session = D
 
 
 @router.get("/requests/incoming")
-def get_incoming_requests(token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def get_incoming_requests(
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     requests = db.query(FriendRequest).filter(
         FriendRequest.to_user_id == user.id,
@@ -204,8 +228,10 @@ def get_incoming_requests(token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/requests/outgoing")
-def get_outgoing_requests(token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def get_outgoing_requests(
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     requests = db.query(FriendRequest).filter(
         FriendRequest.from_user_id == user.id,
@@ -229,8 +255,10 @@ def get_outgoing_requests(token: str, db: Session = Depends(get_db)):
 # --- Friend Management ---
 
 @router.get("/list", response_model=FriendListResponse)
-def list_friends(token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def list_friends(
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     friendships = db.query(Friendship).filter(Friendship.user_id == user.id).all()
 
@@ -244,8 +272,11 @@ def list_friends(token: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/remove")
-def remove_friend(data: FriendRequestSend, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def remove_friend(
+    data: FriendRequestSend,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
     friend = get_user_by_username(data.username, db)
 
     friendship1 = db.query(Friendship).filter(
@@ -278,8 +309,11 @@ def remove_friend(data: FriendRequestSend, token: str, db: Session = Depends(get
 # --- Block ---
 
 @router.post("/block")
-def block_user(data: BlockUser, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def block_user(
+    data: BlockUser,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
     target = get_user_by_username(data.username, db)
 
     if user.id == target.id:
@@ -320,8 +354,11 @@ def block_user(data: BlockUser, token: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/unblock")
-def unblock_user(data: BlockUser, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def unblock_user(
+    data: BlockUser,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
     target = get_user_by_username(data.username, db)
 
     block = db.query(Block).filter(
@@ -336,8 +373,10 @@ def unblock_user(data: BlockUser, token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/blocked")
-def list_blocked_users(token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def list_blocked_users(
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
 
     blocks = db.query(Block).filter(Block.blocker_id == user.id).all()
 
@@ -357,8 +396,11 @@ def list_blocked_users(token: str, db: Session = Depends(get_db)):
 # --- Anti-Spam Check ---
 
 @router.get("/can-message/{username}", response_model=MessageCheckResponse)
-def can_message(username: str, token: str, db: Session = Depends(get_db)):
-    user = get_user_from_token(token, db)
+def can_message(
+    username: str,
+    user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
     target = get_user_by_username(username, db)
 
     if user.id == target.id:
@@ -377,13 +419,11 @@ def can_message(username: str, token: str, db: Session = Depends(get_db)):
 
 @router.get("/conversations", response_model=ConversationListResponse)
 def list_conversations(
-    token: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
 ):
-    user = get_user_from_token(token, db)
-
     query = db.query(Conversation).filter(
         or_(Conversation.user1_id == user.id, Conversation.user2_id == user.id)
     )
