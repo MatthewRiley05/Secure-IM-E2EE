@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 
 from app.db import get_db
 from app.models import (
@@ -83,10 +84,14 @@ def send_friend_request(data: FriendRequestSend, token: str, db: Session = Depen
     existing = db.query(FriendRequest).filter(
         FriendRequest.from_user_id == user.id,
         FriendRequest.to_user_id == target.id,
-        FriendRequest.status == FriendRequestStatus.PENDING.value,
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Friend request already sent")
+        if existing.status == FriendRequestStatus.PENDING.value:
+            raise HTTPException(status_code=400, detail="Friend request already sent")
+        existing.status = FriendRequestStatus.PENDING.value
+        db.commit()
+        db.refresh(existing)
+        return {"message": "Friend request resent", "request_id": existing.id}
 
     reverse = db.query(FriendRequest).filter(
         FriendRequest.from_user_id == target.id,
@@ -102,7 +107,11 @@ def send_friend_request(data: FriendRequestSend, token: str, db: Session = Depen
         status=FriendRequestStatus.PENDING.value,
     )
     db.add(request)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Friend request already exists")
     db.refresh(request)
 
     return {"message": "Friend request sent", "request_id": request.id}
