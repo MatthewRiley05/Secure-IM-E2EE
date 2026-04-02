@@ -441,10 +441,12 @@ def list_conversations(
     )
 
     total = query.count()
-    conversations = query.order_by(Conversation.updated_at.desc()) \
-        .offset((page - 1) * page_size) \
-        .limit(page_size) \
+    conversations = (
+        query.order_by(Conversation.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
+    )
 
     other_user_ids = set()
     for conv in conversations:
