@@ -282,13 +282,13 @@ def list_friends(
     return FriendListResponse(friends=friends, total=len(friends))
 
 
-@router.delete("/remove")
+@router.delete("/remove/{username}")
 def remove_friend(
-    data: FriendRequestSend,
+    username: str,
     user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
 ):
-    friend = get_user_by_username(data.username, db)
+    friend = get_user_by_username(username, db)
 
     friendship1 = db.query(Friendship).filter(
         Friendship.user_id == user.id, Friendship.friend_id == friend.id
@@ -364,13 +364,13 @@ def block_user(
     return {"message": f"User {target.username} blocked"}
 
 
-@router.delete("/unblock")
+@router.delete("/unblock/{username}")
 def unblock_user(
-    data: BlockUser,
+    username: str,
     user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
 ):
-    target = get_user_by_username(data.username, db)
+    target = get_user_by_username(username, db)
 
     block = db.query(Block).filter(
         Block.blocker_id == user.id, Block.blocked_id == target.id
