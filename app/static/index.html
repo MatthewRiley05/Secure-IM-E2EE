@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Secure IM - Friends UI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <h1>Secure IM</h1>
+      <p>Authentication, friends, and conversations dashboard</p>
+    </header>
+
+    <section id="auth-section" class="grid two-col">
+      <article class="card">
+        <h2>Register</h2>
+        <form id="register-form" class="stack">
+          <label>Username<input id="register-username" required minlength="3" /></label>
+          <label>Email<input id="register-email" type="email" /></label>
+          <label>Password<input id="register-password" type="password" required minlength="8" /></label>
+          <button type="submit">Create Account</button>
+        </form>
+        <pre id="register-output" class="output"></pre>
+      </article>
+
+      <article class="card">
+        <h2>Login</h2>
+        <form id="login-form" class="stack">
+          <label>Username<input id="login-username" required /></label>
+          <label>Password<input id="login-password" type="password" required /></label>
+          <label>OTP Code<input id="login-otp" required minlength="6" maxlength="6" /></label>
+          <button type="submit">Login</button>
+        </form>
+      </article>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <article class="card">
+        <div class="row between">
+          <h2>Dashboard</h2>
+          <button id="logout-btn" class="danger">Logout</button>
+        </div>
+        <p id="session-user">Not logged in</p>
+      </article>
+
+      <section class="grid two-col">
+        <article class="card">
+          <h3>Add Friend</h3>
+          <form id="send-request-form" class="inline">
+            <input id="friend-username" placeholder="Username" required />
+            <button type="submit">Send</button>
+          </form>
+        </article>
+
+        <article class="card">
+          <h3>Message Permission</h3>
+          <form id="can-message-form" class="inline">
+            <input id="can-message-username" placeholder="Username" required />
+            <button type="submit">Check</button>
+          </form>
+          <p id="can-message-result" class="muted"></p>
+        </article>
+      </section>
+
+      <section class="grid two-col">
+        <article class="card">
+          <h3>Incoming Requests</h3>
+          <ul id="incoming-requests" class="list"></ul>
+        </article>
+        <article class="card">
+          <h3>Outgoing Requests</h3>
+          <ul id="outgoing-requests" class="list"></ul>
+        </article>
+      </section>
+
+      <section class="grid two-col">
+        <article class="card">
+          <h3>Friends</h3>
+          <ul id="friends-list" class="list"></ul>
+        </article>
+        <article class="card">
+          <h3>Blocked Users</h3>
+          <ul id="blocked-list" class="list"></ul>
+        </article>
+      </section>
+
+      <article class="card">
+        <div class="row between">
+          <h3>Conversations</h3>
+          <button id="refresh-conversations">Refresh</button>
+        </div>
+        <ul id="conversations-list" class="list"></ul>
+      </article>
+    </section>
+
+    <article class="card">
+      <h3>System Messages</h3>
+      <pre id="system-output" class="output"></pre>
+    </article>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
