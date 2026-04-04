@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Secure IM - Friends UI</title>
+  <title>Secure IM - E2EE Dashboard</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <main class="page">
     <header class="hero">
       <h1>Secure IM</h1>
-      <p>Authentication, friends, and conversations dashboard</p>
+      <p>End-to-end encrypted instant messaging</p>
     </header>
 
+    <!-- Auth section (register + login) -->
     <section id="auth-section" class="grid two-col">
       <article class="card">
         <h2>Register</h2>
@@ -36,15 +37,29 @@
       </article>
     </section>
 
+    <!-- Dashboard (visible after login) -->
     <section id="dashboard" class="hidden">
+
+      <!-- Top bar -->
       <article class="card">
         <div class="row between">
           <h2>Dashboard</h2>
-          <button id="logout-btn" class="danger">Logout</button>
+          <div class="row">
+            <span id="key-status" class="key-status-ok"></span>
+            <button id="logout-btn" class="danger">Logout</button>
+          </div>
         </div>
         <p id="session-user">Not logged in</p>
       </article>
 
+      <!-- Identity Key Info -->
+      <article class="card">
+        <h3>Your Identity Key</h3>
+        <p class="small-label">Your fingerprint (share with contacts to verify):</p>
+        <pre id="my-fingerprint" class="output fingerprint-display"></pre>
+      </article>
+
+      <!-- Friend actions -->
       <section class="grid two-col">
         <article class="card">
           <h3>Add Friend</h3>
@@ -64,6 +79,7 @@
         </article>
       </section>
 
+      <!-- Requests -->
       <section class="grid two-col">
         <article class="card">
           <h3>Incoming Requests</h3>
@@ -75,6 +91,7 @@
         </article>
       </section>
 
+      <!-- Friends + Blocked -->
       <section class="grid two-col">
         <article class="card">
           <h3>Friends</h3>
@@ -86,6 +103,7 @@
         </article>
       </section>
 
+      <!-- Conversations -->
       <article class="card">
         <div class="row between">
           <h3>Conversations</h3>
@@ -93,14 +111,55 @@
         </div>
         <ul id="conversations-list" class="list"></ul>
       </article>
+
+      <!-- Contact Fingerprint Lookup -->
+      <article class="card">
+        <h3>Verify Contact Fingerprint</h3>
+        <form id="fingerprint-form" class="inline">
+          <input id="fingerprint-username" placeholder="Contact username" required />
+          <button type="submit">Lookup</button>
+        </form>
+        <pre id="contact-fingerprint-result" class="output"></pre>
+      </article>
+
+      <!-- E2EE Demo: Encrypt / Decrypt -->
+      <section class="grid two-col">
+        <article class="card">
+          <h3>Encrypt Message</h3>
+          <div class="stack">
+            <label>Recipient
+              <input id="encrypt-contact" placeholder="Friend's username" />
+            </label>
+            <label>Message
+              <textarea id="encrypt-message" rows="3" placeholder="Type your message..."></textarea>
+            </label>
+            <button id="encrypt-btn">Encrypt</button>
+            <pre id="encrypt-output" class="output"></pre>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Decrypt Message</h3>
+          <div class="stack">
+            <label>Encrypted JSON
+              <textarea id="decrypt-ciphertext" rows="6" placeholder="Paste encrypted message JSON here..."></textarea>
+            </label>
+            <button id="decrypt-btn">Decrypt</button>
+            <pre id="decrypt-output" class="output"></pre>
+          </div>
+        </article>
+      </section>
+
     </section>
 
+    <!-- System Messages -->
     <article class="card">
       <h3>System Messages</h3>
       <pre id="system-output" class="output"></pre>
     </article>
   </main>
 
+  <script src="/static/e2ee.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

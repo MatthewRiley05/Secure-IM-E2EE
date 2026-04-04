@@ -72,6 +72,22 @@ class Block(Base):
     )
 
 
+# stores identity public keys uploaded by each client
+class UserPublicKey(Base):
+    __tablename__ = "user_public_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    public_key = Column(String, nullable=False)       # base64-encoded raw ECDH P-256 public key
+    key_type = Column(String, default="ecdh-p256")
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    previous_key = Column(String, nullable=True)       # keeps the old key so we can detect changes
+
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_user_public_key"),
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

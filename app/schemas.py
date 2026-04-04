@@ -106,3 +106,22 @@ class ConversationListResponse(BaseModel):
 class MessageCheckResponse(BaseModel):
     allowed: bool
     reason: str | None = None
+
+
+# --- Key Management Schemas ---
+
+class PublicKeyUpload(BaseModel):
+    public_key: str  # base64-encoded raw public key bytes
+
+class PublicKeyResponse(BaseModel):
+    user_id: int
+    username: str
+    public_key: str
+    key_type: str
+    uploaded_at: str
+    key_changed: bool = False  # true if key differs from what was stored before
+
+class FingerprintResponse(BaseModel):
+    username: str
+    fingerprint: str  # hex-formatted SHA-256 of the raw public key
+    public_key: str

@@ -15,6 +15,12 @@ const el = {
   friendsList: document.getElementById("friends-list"),
   blockedList: document.getElementById("blocked-list"),
   conversationsList: document.getElementById("conversations-list"),
+  // e2ee elements
+  keyStatus: document.getElementById("key-status"),
+  myFingerprint: document.getElementById("my-fingerprint"),
+  contactFingerprintResult: document.getElementById("contact-fingerprint-result"),
+  encryptOutput: document.getElementById("encrypt-output"),
+  decryptOutput: document.getElementById("decrypt-output"),
 };
 
 function setSystemMessage(message, data) {
@@ -48,7 +54,15 @@ async function api(path, options = {}) {
   }
 
   if (!res.ok) {
-    const msg = payload && payload.detail ? payload.detail : `HTTP ${res.status}`;
+    let msg = `HTTP ${res.status}`;
+    if (payload && payload.detail) {
+      if (typeof payload.detail === "string") {
+        msg = payload.detail;
+      } else if (Array.isArray(payload.detail)) {
+        // pydantic validation errors come as an array
+        msg = payload.detail.map((e) => e.msg || JSON.stringify(e)).join("; ");
+      }
+    }
     throw new Error(msg);
   }
   return payload;
@@ -78,6 +92,284 @@ function emptyList(container, message) {
   li.textContent = message;
   container.appendChild(li);
 }
+
+// ============ E2EE integration ============
+
+// generate or load identity keypair, upload public key to server
+async function initE2EE() {
+  if (!state.token || !state.currentUser) return;
+
+  let keyData = E2EE.loadKeypairLocally(state.currentUser);
+
+  if (!keyData) {
+    // first time — generate a fresh keypair
+    setSystemMessage("Generating identity keypair...");
+    const keyPair = await E2EE.generateIdentityKeypair();
+    const pubB64 = await E2EE.exportPublicKey(keyPair.publicKey);
+    const privJwk = await E2EE.exportPrivateKey(keyPair.privateKey);
+    E2EE.saveKeypairLocally(state.currentUser, pubB64, privJwk);
+    keyData = { publicKey: pubB64, privateKey: privJwk };
+    setSystemMessage("Identity keypair generated and saved locally");
+  }
+
+  // upload public key to the server
+  try {
+    const result = await api("/keys/upload", {
+      method: "POST",
+      json: { public_key: keyData.publicKey },
+    });
+    if (el.keyStatus) {
+      el.keyStatus.textContent = "Identity key active";
+      el.keyStatus.className = "key-status-ok";
+    }
+    if (result.key_changed) {
+      setSystemMessage("Warning: your identity key was updated on the server");
+    }
+  } catch (err) {
+    if (el.keyStatus) {
+      el.keyStatus.textContent = "Key upload failed";
+      el.keyStatus.className = "key-status-err";
+    }
+    setSystemMessage(`Key upload failed: ${err.message}`);
+  }
+
+  // show own fingerprint
+  if (el.myFingerprint) {
+    const fp = await E2EE.computeFingerprint(keyData.publicKey);
+    el.myFingerprint.textContent = fp;
+  }
+}
+
+// fetch a contact's key and check for changes
+async function fetchContactKey(contactUsername) {
+  const result = await api(`/keys/${encodeURIComponent(contactUsername)}`);
+  const keyChanged = E2EE.saveContactKey(state.currentUser, contactUsername, result.public_key);
+
+  if (keyChanged || result.key_changed) {
+    return { ...result, warning: true };
+  }
+  return { ...result, warning: false };
+}
+
+// ============ friends list (with fingerprint + verify) ============
+
+async function refreshFriends() {
+  try {
+    const data = await api("/friends/list");
+    el.friendsList.innerHTML = "";
+    if (!data.friends.length) return emptyList(el.friendsList, "No friends yet");
+
+    for (const friend of data.friends) {
+      const li = document.createElement("li");
+      li.className = "friend-item";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "friend-name";
+      nameSpan.textContent = friend.username;
+      li.appendChild(nameSpan);
+
+      // check verification status from local storage
+      const contactData = E2EE.loadContactKey(state.currentUser, friend.username);
+      if (contactData && contactData.verified) {
+        const verifiedBadge = document.createElement("span");
+        verifiedBadge.className = "verified-badge";
+        verifiedBadge.textContent = "Verified";
+        li.appendChild(verifiedBadge);
+      }
+
+      const controls = document.createElement("div");
+      controls.className = "row";
+
+      controls.append(
+        actionButton("Fingerprint", async () => {
+          try {
+            const keyInfo = await fetchContactKey(friend.username);
+            const fp = await E2EE.computeFingerprint(keyInfo.public_key);
+            let msg = `${friend.username}'s fingerprint:\n${fp}`;
+            if (keyInfo.warning) {
+              msg = `WARNING: ${friend.username}'s identity key has CHANGED!\n` +
+                    `This could mean they reinstalled or someone is intercepting.\n\n` + msg;
+            }
+            const localData = E2EE.loadContactKey(state.currentUser, friend.username);
+            if (localData && localData.verified) {
+              msg += "\n\nStatus: Verified";
+            } else {
+              msg += "\n\nStatus: Not verified";
+            }
+            setSystemMessage(msg);
+          } catch (err) {
+            setSystemMessage(`Could not get fingerprint: ${err.message}`);
+          }
+        }),
+        actionButton("Verify", async () => {
+          try {
+            // fetch key first to make sure we have it
+            await fetchContactKey(friend.username);
+            E2EE.markContactVerified(state.currentUser, friend.username);
+            setSystemMessage(`Marked ${friend.username} as verified`);
+            await refreshFriends(); // re-render to show badge
+          } catch (err) {
+            setSystemMessage(`Verify failed: ${err.message}`);
+          }
+        }),
+        actionButton("Remove", async () => {
+          await api(`/friends/remove/${encodeURIComponent(friend.username)}`, { method: "DELETE" });
+          setSystemMessage("Friend removed");
+          await refreshAll();
+        }, "danger"),
+        actionButton("Block", async () => {
+          await api("/friends/block", { method: "POST", json: { username: friend.username } });
+          setSystemMessage(`Blocked ${friend.username}`);
+          await refreshAll();
+        }, "danger")
+      );
+
+      li.appendChild(controls);
+      el.friendsList.appendChild(li);
+    }
+  } catch (err) {
+    setSystemMessage(`Friends refresh failed: ${err.message}`);
+  }
+}
+
+// ============ encryption demo section ============
+
+async function handleEncryptDemo() {
+  const contactInput = document.getElementById("encrypt-contact");
+  const messageInput = document.getElementById("encrypt-message");
+  if (!contactInput || !messageInput) return;
+
+  const contact = contactInput.value.trim();
+  const plaintext = messageInput.value.trim();
+  if (!contact || !plaintext) {
+    setSystemMessage("Enter both a contact username and message");
+    return;
+  }
+
+  try {
+    // load our private key
+    const keyData = E2EE.loadKeypairLocally(state.currentUser);
+    if (!keyData) {
+      setSystemMessage("No local keypair found — please log in again");
+      return;
+    }
+    const myPrivKey = await E2EE.importPrivateKey(keyData.privateKey);
+
+    // fetch contact's public key
+    const contactKeyInfo = await fetchContactKey(contact);
+
+    if (contactKeyInfo.warning) {
+      setSystemMessage(
+        `WARNING: ${contact}'s key has changed! Verify before trusting this session.`
+      );
+    }
+
+    // derive shared session key
+    const context = E2EE.buildContext(state.currentUser, contact);
+    const sessionKey = await E2EE.deriveSessionKey(
+      myPrivKey,
+      contactKeyInfo.public_key,
+      context
+    );
+
+    // build metadata for AAD binding
+    const counter = E2EE.getNextSendCounter(state.currentUser, contact);
+    const metadata = {
+      sender: state.currentUser,
+      receiver: contact,
+      counter: counter,
+      timestamp: Date.now(),
+    };
+
+    // encrypt
+    const encrypted = await E2EE.encryptMessage(sessionKey, plaintext, metadata);
+
+    if (el.encryptOutput) {
+      el.encryptOutput.textContent = JSON.stringify(encrypted, null, 2);
+    }
+    setSystemMessage(`Message encrypted (counter=${counter})`);
+  } catch (err) {
+    setSystemMessage(`Encryption failed: ${err.message}`);
+  }
+}
+
+async function handleDecryptDemo() {
+  const ciphertextInput = document.getElementById("decrypt-ciphertext");
+  if (!ciphertextInput) return;
+
+  const raw = ciphertextInput.value.trim();
+  if (!raw) {
+    setSystemMessage("Paste encrypted message JSON to decrypt");
+    return;
+  }
+
+  let encrypted;
+  try {
+    encrypted = JSON.parse(raw);
+  } catch {
+    setSystemMessage("Invalid JSON — paste the full encrypted message object");
+    return;
+  }
+
+  try {
+    const sender = encrypted.metadata?.sender;
+    if (!sender) {
+      setSystemMessage("Encrypted message is missing sender in metadata");
+      return;
+    }
+
+    // replay check
+    const counter = encrypted.metadata?.counter;
+    if (counter !== undefined) {
+      const ok = E2EE.checkReplayAndUpdate(state.currentUser, sender, counter);
+      if (!ok) {
+        setSystemMessage(`REJECTED: replay or duplicate detected (counter=${counter})`);
+        if (el.decryptOutput) {
+          el.decryptOutput.textContent = "REJECTED — replayed message";
+        }
+        return;
+      }
+    }
+
+    // load our private key
+    const keyData = E2EE.loadKeypairLocally(state.currentUser);
+    if (!keyData) {
+      setSystemMessage("No local keypair found");
+      return;
+    }
+    const myPrivKey = await E2EE.importPrivateKey(keyData.privateKey);
+
+    // fetch sender's public key
+    const senderKeyInfo = await fetchContactKey(sender);
+
+    if (senderKeyInfo.warning) {
+      setSystemMessage(`WARNING: ${sender}'s key has changed since last time!`);
+    }
+
+    // derive session key (same ECDH shared secret)
+    const context = E2EE.buildContext(state.currentUser, sender);
+    const sessionKey = await E2EE.deriveSessionKey(
+      myPrivKey,
+      senderKeyInfo.public_key,
+      context
+    );
+
+    // decrypt
+    const plaintext = await E2EE.decryptMessage(sessionKey, encrypted);
+
+    if (el.decryptOutput) {
+      el.decryptOutput.textContent = plaintext;
+    }
+    setSystemMessage(`Message decrypted successfully (counter=${counter})`);
+  } catch (err) {
+    setSystemMessage(`Decryption failed: ${err.message}`);
+    if (el.decryptOutput) {
+      el.decryptOutput.textContent = "Decryption failed — wrong key or tampered data";
+    }
+  }
+}
+
+// ============ other refresh functions (unchanged logic) ============
 
 async function refreshIncoming() {
   try {
@@ -135,39 +427,6 @@ async function refreshOutgoing() {
   }
 }
 
-async function refreshFriends() {
-  try {
-    const data = await api("/friends/list");
-    el.friendsList.innerHTML = "";
-    if (!data.friends.length) return emptyList(el.friendsList, "No friends yet");
-
-    data.friends.forEach((friend) => {
-      const li = document.createElement("li");
-      li.append(friend.username);
-
-      const controls = document.createElement("div");
-      controls.className = "row";
-      controls.append(
-        actionButton("Remove", async () => {
-          await api(`/friends/remove/${encodeURIComponent(friend.username)}`, { method: "DELETE" });
-          setSystemMessage("Friend removed");
-          await refreshAll();
-        }, "danger"),
-        actionButton("Block", async () => {
-          await api("/friends/block", { method: "POST", json: { username: friend.username } });
-          setSystemMessage(`Blocked ${friend.username}`);
-          await refreshAll();
-        }, "danger")
-      );
-
-      li.appendChild(controls);
-      el.friendsList.appendChild(li);
-    });
-  } catch (err) {
-    setSystemMessage(`Friends refresh failed: ${err.message}`);
-  }
-}
-
 async function refreshBlocked() {
   try {
     const data = await api("/friends/blocked");
@@ -222,6 +481,8 @@ async function refreshAll() {
   ]);
 }
 
+// ============ event listeners ============
+
 document.getElementById("register-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
@@ -261,6 +522,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     localStorage.setItem("username", username);
     renderAuthState();
     setSystemMessage(`Logged in as ${username}`);
+    await initE2EE();
     await refreshAll();
   } catch (err) {
     setSystemMessage(`Login failed: ${err.message}`);
@@ -310,9 +572,57 @@ document.getElementById("can-message-form").addEventListener("submit", async (e)
   }
 });
 
+// fingerprint lookup
+const fpForm = document.getElementById("fingerprint-form");
+if (fpForm) {
+  fpForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = document.getElementById("fingerprint-username").value.trim();
+    if (!username) return;
+    try {
+      const keyInfo = await fetchContactKey(username);
+      const fp = await E2EE.computeFingerprint(keyInfo.public_key);
+      let result = `${fp}`;
+      if (keyInfo.warning) {
+        result = `KEY CHANGED!\n${result}`;
+      }
+      const localData = E2EE.loadContactKey(state.currentUser, username);
+      if (localData && localData.verified) {
+        result += "\nVerified";
+      }
+      if (el.contactFingerprintResult) {
+        el.contactFingerprintResult.textContent = result;
+        el.contactFingerprintResult.className = keyInfo.warning
+          ? "output key-warning"
+          : "output";
+      }
+    } catch (err) {
+      if (el.contactFingerprintResult) {
+        el.contactFingerprintResult.textContent = `Error: ${err.message}`;
+      }
+    }
+  });
+}
+
+// encrypt button
+const encryptBtn = document.getElementById("encrypt-btn");
+if (encryptBtn) {
+  encryptBtn.addEventListener("click", handleEncryptDemo);
+}
+
+// decrypt button
+const decryptBtn = document.getElementById("decrypt-btn");
+if (decryptBtn) {
+  decryptBtn.addEventListener("click", handleDecryptDemo);
+}
+
 document.getElementById("refresh-conversations").addEventListener("click", refreshConversations);
+
+// ============ init ============
 
 renderAuthState();
 if (state.token) {
-  refreshAll().catch((err) => setSystemMessage(`Initial refresh failed: ${err.message}`));
+  initE2EE()
+    .then(() => refreshAll())
+    .catch((err) => setSystemMessage(`Init failed: ${err.message}`));
 }
