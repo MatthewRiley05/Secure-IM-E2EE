@@ -125,3 +125,54 @@ class FingerprintResponse(BaseModel):
     username: str
     fingerprint: str  # hex-formatted SHA-256 of the raw public key
     public_key: str
+
+
+# --- Messaging Schemas ---
+
+class MessageSendRequest(BaseModel):
+    receiver_username: str
+    ciphertext: dict
+    ttl_seconds: int | None = Field(default=None, ge=1, le=604800)
+
+
+class MessageStatusResponse(BaseModel):
+    id: int
+    status: str
+    delivered_at: str | None = None
+    read_at: str | None = None
+
+
+class MessageItemResponse(BaseModel):
+    id: int
+    sender_username: str
+    receiver_username: str
+    ciphertext: dict
+    status: str
+    created_at: str
+    delivered_at: str | None = None
+    read_at: str | None = None
+    expires_at: str | None = None
+
+
+class MessageListResponse(BaseModel):
+    messages: list[MessageItemResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class PendingMessageResponse(BaseModel):
+    messages: list[MessageItemResponse]
+    total: int
+
+
+class MarkReadResponse(BaseModel):
+    conversation_id: int
+    marked_read: int
+
+
+class SendMessageResponse(BaseModel):
+    message_id: int
+    status: str
+    created_at: str
+    expires_at: str | None = None

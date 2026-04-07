@@ -154,18 +154,38 @@ def accept_friend_request(
 
     request.status = FriendRequestStatus.ACCEPTED.value
 
-    friendship1 = Friendship(user_id=request.from_user_id, friend_id=request.to_user_id)
-    friendship2 = Friendship(user_id=request.to_user_id, friend_id=request.from_user_id)
-    db.add(friendship1)
-    db.add(friendship2)
+    friendship1 = db.query(Friendship).filter(
+        Friendship.user_id == request.from_user_id,
+        Friendship.friend_id == request.to_user_id,
+    ).first()
+    friendship2 = db.query(Friendship).filter(
+        Friendship.user_id == request.to_user_id,
+        Friendship.friend_id == request.from_user_id,
+    ).first()
 
-    conversation = Conversation(
-        user1_id=min(request.from_user_id, request.to_user_id),
-        user2_id=max(request.from_user_id, request.to_user_id),
-    )
-    db.add(conversation)
+    if not friendship1:
+        db.add(Friendship(user_id=request.from_user_id, friend_id=request.to_user_id))
+    if not friendship2:
+        db.add(Friendship(user_id=request.to_user_id, friend_id=request.from_user_id))
 
-    db.commit()
+    existing_conversation = db.query(Conversation).filter(
+        Conversation.user1_id == min(request.from_user_id, request.to_user_id),
+        Conversation.user2_id == max(request.from_user_id, request.to_user_id),
+    ).first()
+
+    if not existing_conversation:
+        conversation = Conversation(
+            user1_id=min(request.from_user_id, request.to_user_id),
+            user2_id=max(request.from_user_id, request.to_user_id),
+        )
+        db.add(conversation)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Friend request already processed")
+
     return {"message": "Friend request accepted"}
 
 
@@ -271,10 +291,22 @@ def list_friends(
 
     friendships = db.query(Friendship).filter(Friendship.user_id == user.id).all()
 
-    username_map = get_username_map({f.friend_id for f in friendships}, db)
+    block_rows = db.query(Block).filter(
+        or_(Block.blocker_id == user.id, Block.blocked_id == user.id)
+    ).all()
+    blocked_partner_ids = {
+        row.blocked_id if row.blocker_id == user.id else row.blocker_id
+        for row in block_rows
+    }
+
+    visible_friendships = [
+        f for f in friendships if f.friend_id not in blocked_partner_ids
+    ]
+
+    username_map = get_username_map({f.friend_id for f in visible_friendships}, db)
 
     friends = []
-    for f in friendships:
+    for f in visible_friendships:
         username = username_map.get(f.friend_id)
         if username:
             friends.append(FriendResponse(id=f.friend_id, username=username))
@@ -338,17 +370,6 @@ def block_user(
 
     block = Block(blocker_id=user.id, blocked_id=target.id)
     db.add(block)
-
-    friendship1 = db.query(Friendship).filter(
-        Friendship.user_id == user.id, Friendship.friend_id == target.id
-    ).first()
-    friendship2 = db.query(Friendship).filter(
-        Friendship.user_id == target.id, Friendship.friend_id == user.id
-    ).first()
-    if friendship1:
-        db.delete(friendship1)
-    if friendship2:
-        db.delete(friendship2)
 
     pending = db.query(FriendRequest).filter(
         FriendRequest.status == FriendRequestStatus.PENDING.value,

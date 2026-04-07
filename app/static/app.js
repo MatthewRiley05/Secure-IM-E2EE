@@ -1,7 +1,12 @@
 const state = {
   token: localStorage.getItem("token") || "",
   currentUser: localStorage.getItem("username") || "",
+  activeChatUser: "",
+  activeChatPage: 1,
+  activeChatMessages: [],
 };
+
+let inboxPollTimer = null;
 
 const el = {
   authSection: document.getElementById("auth-section"),
@@ -21,6 +26,14 @@ const el = {
   contactFingerprintResult: document.getElementById("contact-fingerprint-result"),
   encryptOutput: document.getElementById("encrypt-output"),
   decryptOutput: document.getElementById("decrypt-output"),
+  chatOpenForm: document.getElementById("chat-open-form"),
+  chatUsername: document.getElementById("chat-username"),
+  chatTtl: document.getElementById("chat-ttl"),
+  chatMessage: document.getElementById("chat-message"),
+  chatSendBtn: document.getElementById("chat-send-btn"),
+  chatLoadMore: document.getElementById("chat-load-more"),
+  chatCurrent: document.getElementById("chat-current"),
+  chatMessages: document.getElementById("chat-messages"),
 };
 
 function setSystemMessage(message, data) {
@@ -151,6 +164,208 @@ async function fetchContactKey(contactUsername) {
   return { ...result, warning: false };
 }
 
+async function encryptForContact(contact, plaintext) {
+  const keyData = E2EE.loadKeypairLocally(state.currentUser);
+  if (!keyData) {
+    throw new Error("No local keypair found — please log in again");
+  }
+  const myPrivKey = await E2EE.importPrivateKey(keyData.privateKey);
+  const contactKeyInfo = await fetchContactKey(contact);
+
+  const context = E2EE.buildContext(state.currentUser, contact);
+  const sessionKey = await E2EE.deriveSessionKey(
+    myPrivKey,
+    contactKeyInfo.public_key,
+    context
+  );
+
+  const counter = E2EE.getNextSendCounter(state.currentUser, contact);
+  const metadata = {
+    sender: state.currentUser,
+    receiver: contact,
+    counter: counter,
+    timestamp: Date.now(),
+  };
+
+  const encrypted = await E2EE.encryptMessage(sessionKey, plaintext, metadata);
+  return { encrypted, counter, warning: contactKeyInfo.warning };
+}
+
+async function decryptForView(message, keyCache) {
+  try {
+    const keyData = E2EE.loadKeypairLocally(state.currentUser);
+    if (!keyData) return "[No local private key]";
+
+    const myPrivKey = await E2EE.importPrivateKey(keyData.privateKey);
+    const other = message.sender_username === state.currentUser
+      ? message.receiver_username
+      : message.sender_username;
+
+    if (!keyCache[other]) {
+      keyCache[other] = await fetchContactKey(other);
+    }
+
+    const context = E2EE.buildContext(state.currentUser, other);
+    const sessionKey = await E2EE.deriveSessionKey(
+      myPrivKey,
+      keyCache[other].public_key,
+      context
+    );
+
+    return await E2EE.decryptMessage(sessionKey, message.ciphertext);
+  } catch {
+    return "[Unable to decrypt message]";
+  }
+}
+
+function formatMessageTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString();
+}
+
+async function renderChatMessages(messages) {
+  if (!el.chatMessages) return;
+  el.chatMessages.innerHTML = "";
+
+  if (!messages.length) {
+    emptyList(el.chatMessages, "No messages yet");
+    return;
+  }
+
+  const keyCache = {};
+  for (const msg of messages) {
+    const li = document.createElement("li");
+    const plaintext = await decryptForView(msg, keyCache);
+
+    const fromMe = msg.sender_username === state.currentUser;
+    const senderLabel = fromMe ? "You" : msg.sender_username;
+    const body = document.createElement("div");
+    body.className = "stack";
+
+    const text = document.createElement("span");
+    text.textContent = `${senderLabel}: ${plaintext}`;
+    body.appendChild(text);
+
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    const statusPart = fromMe ? ` (${msg.status})` : "";
+    meta.textContent = `${formatMessageTime(msg.created_at)}${statusPart}`;
+    body.appendChild(meta);
+
+    li.appendChild(body);
+    el.chatMessages.appendChild(li);
+  }
+}
+
+async function loadActiveConversation(reset = true) {
+  if (!state.activeChatUser) return;
+  if (!el.chatCurrent) return;
+
+  if (reset) {
+    state.activeChatPage = 1;
+    state.activeChatMessages = [];
+  }
+
+  const data = await api(
+    `/messages/conversation/${encodeURIComponent(state.activeChatUser)}?page=${state.activeChatPage}&page_size=20`
+  );
+
+  if (!data.messages.length && !reset) {
+    setSystemMessage("No older messages");
+    return;
+  }
+
+  if (reset) {
+    state.activeChatMessages = data.messages;
+  } else {
+    state.activeChatMessages = [...data.messages, ...state.activeChatMessages];
+  }
+
+  await renderChatMessages(state.activeChatMessages);
+  try {
+    await api(`/messages/read/${encodeURIComponent(state.activeChatUser)}`, { method: "POST" });
+    await refreshConversations();
+  } catch {
+    // ignore read-mark errors in UI
+  }
+}
+
+async function sendChatMessage() {
+  if (!state.activeChatUser) {
+    setSystemMessage("Open a conversation first");
+    return;
+  }
+  if (!el.chatMessage) return;
+
+  const plaintext = el.chatMessage.value.trim();
+  if (!plaintext) {
+    setSystemMessage("Type a message first");
+    return;
+  }
+
+  let ttlSeconds = null;
+  if (el.chatTtl && el.chatTtl.value.trim()) {
+    const parsed = Number(el.chatTtl.value.trim());
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 604800) {
+      setSystemMessage("TTL must be an integer between 1 and 604800");
+      return;
+    }
+    ttlSeconds = parsed;
+  }
+
+  const { encrypted, warning } = await encryptForContact(state.activeChatUser, plaintext);
+  if (warning) {
+    setSystemMessage(`WARNING: ${state.activeChatUser}'s key has changed`);
+  }
+
+  await api("/messages/send", {
+    method: "POST",
+    json: {
+      receiver_username: state.activeChatUser,
+      ciphertext: encrypted,
+      ttl_seconds: ttlSeconds,
+    },
+  });
+
+  el.chatMessage.value = "";
+  await loadActiveConversation(true);
+  await refreshConversations();
+}
+
+async function pollPendingMessages() {
+  if (!state.token) return;
+  try {
+    const result = await api("/messages/inbox/pending?limit=50");
+    if (result.total > 0) {
+      setSystemMessage(`Received ${result.total} pending message(s)`);
+      await refreshConversations();
+      if (state.activeChatUser) {
+        await loadActiveConversation(true);
+      }
+    }
+  } catch {
+    // silent background polling
+  }
+}
+
+function startInboxPolling() {
+  if (inboxPollTimer) {
+    clearInterval(inboxPollTimer);
+  }
+  inboxPollTimer = setInterval(() => {
+    pollPendingMessages();
+  }, 5000);
+}
+
+function stopInboxPolling() {
+  if (inboxPollTimer) {
+    clearInterval(inboxPollTimer);
+    inboxPollTimer = null;
+  }
+}
+
 // ============ friends list (with fingerprint + verify) ============
 
 async function refreshFriends() {
@@ -196,9 +411,21 @@ async function refreshFriends() {
             } else {
               msg += "\n\nStatus: Not verified";
             }
+
+            if (el.contactFingerprintResult) {
+              el.contactFingerprintResult.textContent = msg;
+              el.contactFingerprintResult.className = keyInfo.warning
+                ? "output key-warning"
+                : "output";
+            }
+
             setSystemMessage(msg);
           } catch (err) {
             setSystemMessage(`Could not get fingerprint: ${err.message}`);
+            if (el.contactFingerprintResult) {
+              el.contactFingerprintResult.textContent = `Error: ${err.message}`;
+              el.contactFingerprintResult.className = "output key-warning";
+            }
           }
         }),
         actionButton("Verify", async () => {
@@ -247,47 +474,17 @@ async function handleEncryptDemo() {
   }
 
   try {
-    // load our private key
-    const keyData = E2EE.loadKeypairLocally(state.currentUser);
-    if (!keyData) {
-      setSystemMessage("No local keypair found — please log in again");
-      return;
-    }
-    const myPrivKey = await E2EE.importPrivateKey(keyData.privateKey);
-
-    // fetch contact's public key
-    const contactKeyInfo = await fetchContactKey(contact);
-
-    if (contactKeyInfo.warning) {
+    const result = await encryptForContact(contact, plaintext);
+    if (result.warning) {
       setSystemMessage(
         `WARNING: ${contact}'s key has changed! Verify before trusting this session.`
       );
     }
 
-    // derive shared session key
-    const context = E2EE.buildContext(state.currentUser, contact);
-    const sessionKey = await E2EE.deriveSessionKey(
-      myPrivKey,
-      contactKeyInfo.public_key,
-      context
-    );
-
-    // build metadata for AAD binding
-    const counter = E2EE.getNextSendCounter(state.currentUser, contact);
-    const metadata = {
-      sender: state.currentUser,
-      receiver: contact,
-      counter: counter,
-      timestamp: Date.now(),
-    };
-
-    // encrypt
-    const encrypted = await E2EE.encryptMessage(sessionKey, plaintext, metadata);
-
     if (el.encryptOutput) {
-      el.encryptOutput.textContent = JSON.stringify(encrypted, null, 2);
+      el.encryptOutput.textContent = JSON.stringify(result.encrypted, null, 2);
     }
-    setSystemMessage(`Message encrypted (counter=${counter})`);
+    setSystemMessage(`Message encrypted (counter=${result.counter})`);
   } catch (err) {
     setSystemMessage(`Encryption failed: ${err.message}`);
   }
@@ -518,11 +715,15 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     });
     state.token = payload.token;
     state.currentUser = username;
+    state.activeChatUser = "";
+    state.activeChatPage = 1;
+    state.activeChatMessages = [];
     localStorage.setItem("token", state.token);
     localStorage.setItem("username", username);
     renderAuthState();
     setSystemMessage(`Logged in as ${username}`);
     await initE2EE();
+    startInboxPolling();
     await refreshAll();
   } catch (err) {
     setSystemMessage(`Login failed: ${err.message}`);
@@ -539,8 +740,12 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   } finally {
     state.token = "";
     state.currentUser = "";
+    state.activeChatUser = "";
+    state.activeChatPage = 1;
+    state.activeChatMessages = [];
     localStorage.removeItem("token");
     localStorage.removeItem("username");
+    stopInboxPolling();
     renderAuthState();
     setSystemMessage("Logged out");
   }
@@ -618,11 +823,58 @@ if (decryptBtn) {
 
 document.getElementById("refresh-conversations").addEventListener("click", refreshConversations);
 
+if (el.chatOpenForm) {
+  el.chatOpenForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!el.chatUsername) return;
+    const username = el.chatUsername.value.trim();
+    if (!username) return;
+    state.activeChatUser = username;
+    state.activeChatPage = 1;
+    if (el.chatCurrent) {
+      el.chatCurrent.textContent = `Conversation with ${username}`;
+    }
+    try {
+      await loadActiveConversation(true);
+    } catch (err) {
+      setSystemMessage(`Open conversation failed: ${err.message}`);
+    }
+  });
+}
+
+if (el.chatSendBtn) {
+  el.chatSendBtn.addEventListener("click", async () => {
+    try {
+      await sendChatMessage();
+    } catch (err) {
+      setSystemMessage(`Send message failed: ${err.message}`);
+    }
+  });
+}
+
+if (el.chatLoadMore) {
+  el.chatLoadMore.addEventListener("click", async () => {
+    if (!state.activeChatUser) {
+      setSystemMessage("Open a conversation first");
+      return;
+    }
+    state.activeChatPage += 1;
+    try {
+      await loadActiveConversation(false);
+    } catch (err) {
+      setSystemMessage(`Load more failed: ${err.message}`);
+    }
+  });
+}
+
 // ============ init ============
 
 renderAuthState();
 if (state.token) {
   initE2EE()
-    .then(() => refreshAll())
+    .then(() => {
+      startInboxPolling();
+      return refreshAll();
+    })
     .catch((err) => setSystemMessage(`Init failed: ${err.message}`));
 }

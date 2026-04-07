@@ -150,6 +150,35 @@
         </article>
       </section>
 
+      <!-- 1:1 Messaging -->
+      <section class="grid two-col">
+        <article class="card">
+          <h3>Chat</h3>
+          <form id="chat-open-form" class="inline">
+            <input id="chat-username" placeholder="Friend username" required />
+            <button type="submit">Open</button>
+          </form>
+          <div class="stack" style="margin-top: 10px;">
+            <label>Message TTL (seconds, optional)
+              <input id="chat-ttl" type="number" min="1" max="604800" placeholder="e.g. 60" />
+            </label>
+            <label>Message
+              <textarea id="chat-message" rows="3" placeholder="Type encrypted message to send"></textarea>
+            </label>
+            <button id="chat-send-btn">Send Message</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="row between">
+            <h3>Conversation Messages</h3>
+            <button id="chat-load-more">Load More</button>
+          </div>
+          <p id="chat-current" class="muted">No conversation selected</p>
+          <ul id="chat-messages" class="list"></ul>
+        </article>
+      </section>
+
     </section>
 
     <!-- System Messages -->

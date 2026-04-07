@@ -8,6 +8,7 @@ email-validator==2.3.0
 fastapi==0.118.0
 greenlet==3.2.4
 h11==0.16.0
+httpx==0.28.1
 idna==3.11
 passlib==1.7.4
 pyasn1==0.6.1
@@ -23,3 +24,4 @@ starlette==0.48.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.37.0
+pytest==8.3.3

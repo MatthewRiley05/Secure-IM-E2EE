@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint, CheckConstraint, Boolean
 from sqlalchemy.sql import func
 from app.db import Base
 import enum
@@ -103,3 +103,25 @@ class Conversation(Base):
         CheckConstraint("user1_id < user2_id", name="ck_conversation_user_order"),
         UniqueConstraint("user1_id", "user2_id", name="uq_conversation"),
     )
+
+
+class MessageStatus(enum.Enum):
+    SENT = "sent"
+    DELIVERED = "delivered"
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    ciphertext_json = Column(String, nullable=False)
+    status = Column(String, default=MessageStatus.SENT.value, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    destroyed_at = Column(DateTime(timezone=True), nullable=True)
