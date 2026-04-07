@@ -27,6 +27,7 @@ const el = {
   encryptOutput: document.getElementById("encrypt-output"),
   decryptOutput: document.getElementById("decrypt-output"),
   chatOpenForm: document.getElementById("chat-open-form"),
+  chatCloseBtn: document.getElementById("chat-close-btn"),
   chatUsername: document.getElementById("chat-username"),
   chatTtl: document.getElementById("chat-ttl"),
   chatMessage: document.getElementById("chat-message"),
@@ -202,7 +203,16 @@ async function decryptForView(message, keyCache) {
       : message.sender_username;
 
     if (!keyCache[other]) {
-      keyCache[other] = await fetchContactKey(other);
+      const localContact = E2EE.loadContactKey(state.currentUser, other);
+      if (localContact && localContact.publicKey) {
+        keyCache[other] = {
+          public_key: localContact.publicKey,
+          warning: false,
+          key_changed: false,
+        };
+      } else {
+        keyCache[other] = await fetchContactKey(other);
+      }
     }
 
     const context = E2EE.buildContext(state.currentUser, other);
@@ -225,6 +235,57 @@ function formatMessageTime(ts) {
   return d.toLocaleString();
 }
 
+function messageDigest(msg) {
+  return `${msg.id}|${msg.status}|${msg.delivered_at || ""}|${msg.read_at || ""}`;
+}
+
+function messagesChanged(prev, next) {
+  if (prev.length !== next.length) return true;
+  for (let i = 0; i < next.length; i += 1) {
+    if (messageDigest(prev[i]) !== messageDigest(next[i])) return true;
+  }
+  return false;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "true");
+  ta.style.position = "absolute";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
+
+async function copyDisplayedMessageText(plaintext) {
+  await copyText(plaintext);
+  setSystemMessage("Message text copied to clipboard");
+}
+
+async function removeMessageFromActiveView(messageId) {
+  state.activeChatMessages = state.activeChatMessages.filter((m) => m.id !== messageId);
+  await renderChatMessages(state.activeChatMessages);
+  setSystemMessage(`Removed message ${messageId} from current chat view`);
+}
+
+function closeActiveChat() {
+  state.activeChatUser = "";
+  state.activeChatPage = 1;
+  state.activeChatMessages = [];
+  if (el.chatCurrent) {
+    el.chatCurrent.textContent = "No conversation selected";
+  }
+  if (el.chatMessages) {
+    el.chatMessages.innerHTML = "";
+  }
+}
+
 async function renderChatMessages(messages) {
   if (!el.chatMessages) return;
   el.chatMessages.innerHTML = "";
@@ -242,7 +303,7 @@ async function renderChatMessages(messages) {
     const fromMe = msg.sender_username === state.currentUser;
     const senderLabel = fromMe ? "You" : msg.sender_username;
     const body = document.createElement("div");
-    body.className = "stack";
+    body.className = "stack message-content";
 
     const text = document.createElement("span");
     text.textContent = `${senderLabel}: ${plaintext}`;
@@ -254,18 +315,34 @@ async function renderChatMessages(messages) {
     meta.textContent = `${formatMessageTime(msg.created_at)}${statusPart}`;
     body.appendChild(meta);
 
+    const controls = document.createElement("div");
+    controls.className = "row end";
+    controls.append(
+      actionButton("Copy", async () => {
+        try {
+          await copyDisplayedMessageText(plaintext);
+        } catch (err) {
+          setSystemMessage(`Copy failed: ${err.message}`);
+        }
+      }, "mini"),
+      actionButton("Delete", async () => {
+        await removeMessageFromActiveView(msg.id);
+      }, "mini danger")
+    );
+
     li.appendChild(body);
+    li.appendChild(controls);
     el.chatMessages.appendChild(li);
   }
 }
 
-async function loadActiveConversation(reset = true) {
+async function loadActiveConversation(reset = true, markRead = true) {
   if (!state.activeChatUser) return;
   if (!el.chatCurrent) return;
+  const previousMessages = state.activeChatMessages;
 
   if (reset) {
     state.activeChatPage = 1;
-    state.activeChatMessages = [];
   }
 
   const data = await api(
@@ -277,18 +354,22 @@ async function loadActiveConversation(reset = true) {
     return;
   }
 
-  if (reset) {
-    state.activeChatMessages = data.messages;
-  } else {
-    state.activeChatMessages = [...data.messages, ...state.activeChatMessages];
-  }
+  const nextMessages = reset
+    ? data.messages
+    : [...data.messages, ...previousMessages];
+  const shouldRender = messagesChanged(previousMessages, nextMessages);
+  state.activeChatMessages = nextMessages;
 
-  await renderChatMessages(state.activeChatMessages);
-  try {
-    await api(`/messages/read/${encodeURIComponent(state.activeChatUser)}`, { method: "POST" });
-    await refreshConversations();
-  } catch {
-    // ignore read-mark errors in UI
+  if (shouldRender) {
+    await renderChatMessages(state.activeChatMessages);
+  }
+  if (markRead) {
+    try {
+      await api(`/messages/read/${encodeURIComponent(state.activeChatUser)}`, { method: "POST" });
+      await refreshConversations();
+    } catch {
+      // ignore read-mark errors in UI
+    }
   }
 }
 
@@ -338,12 +419,15 @@ async function pollPendingMessages() {
   if (!state.token) return;
   try {
     const result = await api("/messages/inbox/pending?limit=50");
-    if (result.total > 0) {
+    const hasNewPending = result.total > 0;
+    if (hasNewPending) {
       setSystemMessage(`Received ${result.total} pending message(s)`);
+    }
+
+    if (state.activeChatUser) {
+      await loadActiveConversation(true, false);
+    } else if (hasNewPending) {
       await refreshConversations();
-      if (state.activeChatUser) {
-        await loadActiveConversation(true);
-      }
     }
   } catch {
     // silent background polling
@@ -740,9 +824,7 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   } finally {
     state.token = "";
     state.currentUser = "";
-    state.activeChatUser = "";
-    state.activeChatPage = 1;
-    state.activeChatMessages = [];
+    closeActiveChat();
     localStorage.removeItem("token");
     localStorage.removeItem("username");
     stopInboxPolling();
@@ -821,7 +903,12 @@ if (decryptBtn) {
   decryptBtn.addEventListener("click", handleDecryptDemo);
 }
 
-document.getElementById("refresh-conversations").addEventListener("click", refreshConversations);
+if (el.chatCloseBtn) {
+  el.chatCloseBtn.addEventListener("click", () => {
+    closeActiveChat();
+    setSystemMessage("Closed active chat");
+  });
+}
 
 if (el.chatOpenForm) {
   el.chatOpenForm.addEventListener("submit", async (e) => {
@@ -866,6 +953,17 @@ if (el.chatLoadMore) {
     }
   });
 }
+
+document.getElementById("refresh-conversations").addEventListener("click", async () => {
+  await refreshConversations();
+  if (state.activeChatUser) {
+    try {
+      await loadActiveConversation(true, false);
+    } catch (err) {
+      setSystemMessage(`Active chat refresh failed: ${err.message}`);
+    }
+  }
+});
 
 // ============ init ============
 

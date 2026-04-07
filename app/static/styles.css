@@ -107,11 +107,30 @@ button.danger {
   background: linear-gradient(180deg, #bf5555, var(--danger));
 }
 
+button.subtle {
+  background: #ece5d9;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+button.mini {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+}
+
+button.mini.danger {
+  background: linear-gradient(180deg, #c46a6a, var(--danger));
+}
+
 .row {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.row.end {
+  justify-content: flex-end;
 }
 
 .between {
@@ -212,6 +231,11 @@ button.danger {
 
 .friend-item .friend-name {
   font-weight: 500;
+}
+
+.message-content {
+  flex: 1;
+  min-width: 220px;
 }
 
 @media (max-width: 800px) {
