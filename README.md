@@ -23,15 +23,62 @@ Secure IM is a FastAPI-based secure messaging demo that combines:
 - Backend: FastAPI + SQLAlchemy
 - Database: SQLite (`im_server.db`)
 - Frontend: static HTML/CSS/JS
-- Client crypto: Web Crypto API
+- Client crypto: Web Crypto API (ECDH P-256, AES-256-GCM, HKDF)
+- Transport Security: Nginx reverse proxy with TLS/SSL (self-signed for dev, CA-signed for production)
 
-## Run Locally
+## Security Architecture
+
+### End-to-End Encryption (E2EE)
+- **Key Agreement**: ECDH P-256 (client-side)
+- **Key Derivation**: HKDF-SHA256
+- **Message Encryption**: AES-256-GCM with authenticated associated data (AAD)
+- **Replay Protection**: Counter-based with out-of-order tolerance (50-message window)
+- **Private Keys**: Never leave client (stored in browser localStorage)
+- **Server Role**: Ciphertext relay only (cannot decrypt messages)
+
+### Transport Security (TLS/SSL)
+- **Connection**: Client ↔ Nginx (TLS 1.2/1.3) ↔ FastAPI
+- **Certificates**: Self-signed for development (provided), CA-signed for production
+- **Headers**: HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection
+- **Cipher Suites**: HIGH:!aNULL:!MD5 (modern standards)
+
+### Authentication
+- **Password**: Bcrypt with per-user salt (passlib)
+- **Session**: Secure random tokens with 1-hour expiry
+- **Two-Factor**: TOTP (RFC 6238) via authenticator app
+- **Rate Limiting**: 5 registrations/min, 10 logins/min, 10 friend requests/min per user
+
+## Quick Start (Recommended for University Submission) ⭐
+
+**Simplest setup - no Docker required!**
+
+### Windows 11:
+```cmd
+setup.bat
+run.bat
+```
+
+### macOS / Linux:
+```bash
+./setup.sh
+./run.sh
+```
+
+**Then open**: https://localhost:8443/ui
+
+✅ That's it! See [QUICKSTART.md](QUICKSTART.md) for detailed walkthrough.
+
+---
+
+## Alternative: Manual Setup for Development
 
 1. Create and activate virtual environment:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate      # Linux/macOS
+# or
+.\.venv\Scripts\Activate.ps1   # Windows PowerShell
 ```
 
 2. Install dependencies:
@@ -40,24 +87,33 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Start server:
+3. Generate certificates:
 
 ```bash
-uvicorn app.main:app --reload
+# Generate self-signed TLS certificate
+openssl req -x509 -newkey rsa:4096 -nodes \
+  -out certs/cert.pem -keyout certs/key.pem -days 365 \
+  -subj "/C=US/ST=State/L=City/O=Secure-IM/CN=localhost"
 ```
 
-If your environment occasionally leaves the reloader process alive after `Ctrl+C`, use:
+4. Start server with TLS:
 
 ```bash
-uvicorn app.main:app --reload --reload-dir app
+# Run on https://localhost:8443
+uvicorn app.main:app \
+  --host 0.0.0.0 \
+  --port 8443 \
+  --ssl-keyfile=certs/key.pem \
+  --ssl-certfile=certs/cert.pem \
+  --reload
 ```
 
-Limiting reload watching to `app/` avoids scanning large workspace trees and improves clean shutdown behavior on some WSL/Linux setups.
+5. Open:
+- **Web UI**: https://localhost:8443/ui
+- **API docs**: https://localhost:8443/docs
+- **API root**: https://localhost:8443/
 
-4. Open:
-- API root: `http://127.0.0.1:8000/`
-- API docs: `http://127.0.0.1:8000/docs`
-- Web UI: `http://127.0.0.1:8000/ui`
+⚠️ **Note**: Server runs on HTTPS with self-signed certificate (browser will show warning - this is normal).
 
 ## Messaging API (Part 4)
 
