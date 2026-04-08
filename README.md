@@ -37,10 +37,9 @@ Secure IM is a FastAPI-based secure messaging demo that combines:
 - **Server Role**: Ciphertext relay only (cannot decrypt messages)
 
 ### Transport Security (TLS/SSL)
-- **Connection**: Client ↔ Nginx (TLS 1.2/1.3) ↔ FastAPI
-- **Certificates**: Self-signed for development (provided), CA-signed for production
-- **Headers**: HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection
-- **Cipher Suites**: HIGH:!aNULL:!MD5 (modern standards)
+- **Dev Setup**: Self-signed RSA 4096-bit certificates, auto-generated and served directly by uvicorn
+- **Production**: Replace with CA-signed certificates or use a reverse proxy (nginx, etc.) for TLS termination
+- **Implementation**: Uvicorn's native `--ssl-keyfile` and `--ssl-certfile` parameters
 
 ### Authentication
 - **Password**: Bcrypt with per-user salt (passlib)
@@ -48,72 +47,48 @@ Secure IM is a FastAPI-based secure messaging demo that combines:
 - **Two-Factor**: TOTP (RFC 6238) via authenticator app
 - **Rate Limiting**: 5 registrations/min, 10 logins/min, 10 friend requests/min per user
 
-## Quick Start (Recommended for University Submission) ⭐
+## Getting Started
 
-**Simplest setup - no Docker required!**
+**No Docker needed. Just Python 3.10+**
 
-### Windows 11:
+### Step 1: Setup (one-time)
+
+**Windows:**
 ```cmd
 setup.bat
+```
+
+**macOS / Linux:**
+```bash
+./setup.sh
+```
+
+This script automatically:
+- Creates a Python virtual environment
+- Installs dependencies
+- Generates TLS certificates with 4096-bit RSA encryption
+- Initializes the SQLite database
+
+### Step 2: Run the Server
+
+**Windows:**
+```cmd
 run.bat
 ```
 
-### macOS / Linux:
+**macOS / Linux:**
 ```bash
-./setup.sh
 ./run.sh
 ```
 
-**Then open**: https://localhost:8443/ui
+### Step 3: Open the App
 
-✅ That's it! See [QUICKSTART.md](QUICKSTART.md) for detailed walkthrough.
+Open your browser to: **https://localhost:8000/ui**
 
----
+(Your browser will show a warning about the self-signed certificate — this is normal for local development. Just click "Advanced" → "Proceed".)
 
-## Alternative: Manual Setup for Development
-
-1. Create and activate virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate      # Linux/macOS
-# or
-.\.venv\Scripts\Activate.ps1   # Windows PowerShell
-```
-
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Generate certificates:
-
-```bash
-# Generate self-signed TLS certificate
-openssl req -x509 -newkey rsa:4096 -nodes \
-  -out certs/cert.pem -keyout certs/key.pem -days 365 \
-  -subj "/C=US/ST=State/L=City/O=Secure-IM/CN=localhost"
-```
-
-4. Start server with TLS:
-
-```bash
-# Run on https://localhost:8443
-uvicorn app.main:app \
-  --host 0.0.0.0 \
-  --port 8443 \
-  --ssl-keyfile=certs/key.pem \
-  --ssl-certfile=certs/cert.pem \
-  --reload
-```
-
-5. Open:
-- **Web UI**: https://localhost:8443/ui
-- **API docs**: https://localhost:8443/docs
-- **API root**: https://localhost:8443/
-
-⚠️ **Note**: Server runs on HTTPS with self-signed certificate (browser will show warning - this is normal).
+**API docs** are at https://localhost:8000/docs
+**Press Ctrl+C to stop** the server anytime.
 
 ## Messaging API (Part 4)
 
@@ -241,23 +216,33 @@ node --check app/static/app.js
 - Replay/duplicate protection: server rejects duplicate `(sender, receiver, counter)` and client also performs local replay checks.
 - TTL binding: `ttl_seconds` must match `ciphertext.metadata.ttl_seconds`; mismatches are rejected.
 
-## TLS Deployment Requirement
+## Production Deployment
 
-Run the API behind HTTPS in deployment. One simple local example is reverse-proxying uvicorn with TLS termination.
+For production, replace the self-signed certificates with CA-signed certificates from a trusted authority (Let's Encrypt, etc.), or use a reverse proxy for TLS termination.
 
+**Option 1: Direct TLS with CA-signed certificates**
 ```bash
+uvicorn app.main:app \
+  --host 0.0.0.0 \
+  --port 443 \
+  --ssl-keyfile=/path/to/privkey.pem \
+  --ssl-certfile=/path/to/fullchain.pem
+```
+
+**Option 2: Reverse proxy (nginx) with TLS termination**
+```bash
+# Run uvicorn without TLS on localhost
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Example nginx TLS proxy snippet:
-
+Example nginx configuration:
 ```nginx
 server {
     listen 443 ssl;
     server_name your-domain.example;
 
-    ssl_certificate /path/fullchain.pem;
-    ssl_certificate_key /path/privkey.pem;
+    ssl_certificate /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
