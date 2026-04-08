@@ -101,16 +101,6 @@ Authorization: Bearer <token>
    - wait for expiry and refresh chat
    - expired message is removed by cleanup hooks
 
-## Demo Data Import
-
-Use the seed script to prepare demo users and data:
-
-```bash
-python3 scripts/seed_demo.py
-```
-
-It creates demo users, friendships, a conversation, and sample encrypted payload messages.
-
 ## Testing Workflow (Aligned with Project Requirements)
 
 The project PDF asks for both functional demonstration and at least 2 security test cases. Use this workflow for development, demo prep, and report evidence.
@@ -183,3 +173,7 @@ node --check app/static/app.js
 - OTP secret (about 32 chars) is provisioning data, not login input.
 - Login uses the current 6-digit TOTP code.
 - Server stores ciphertext and metadata only; private keys stay in browser local storage.
+- Open chat auto-refreshes during inbox polling so delivery/read status updates appear without reopening chat.
+- Chat `Close` button clears only the active UI chat state.
+- Message-row `Copy` copies exactly the text shown in that row.
+- Message-row `Delete` is UI-only (removes from current view state, not server/database).

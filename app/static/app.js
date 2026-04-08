@@ -739,7 +739,10 @@ async function refreshConversations() {
 
     data.conversations.forEach((conv) => {
       const li = document.createElement("li");
-      li.append(`${conv.other_username}`);
+      const name = document.createElement("span");
+      name.textContent = `${conv.other_username} - Last activity: ${formatMessageTime(conv.updated_at) || "Unknown"}`;
+      li.appendChild(name);
+
       const badge = document.createElement("span");
       badge.className = "badge";
       badge.textContent = `Unread: ${conv.unread_count}`;
