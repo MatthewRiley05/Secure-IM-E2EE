@@ -48,9 +48,9 @@ echo "=================================="
 echo ""
 
 # Start the server with TLS
-# Using uvicorn with SSL certificates
+# Using uvicorn with SSL certificates (default localhost binding)
 python3 -m uvicorn app.main:app \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     --port 8000 \
     --ssl-keyfile=certs/key.pem \
     --ssl-certfile=certs/cert.pem \

@@ -58,9 +58,9 @@ echo.
 echo ==================================
 echo.
 
-REM Start the server with TLS
+REM Start the server with TLS (default localhost binding)
 python -m uvicorn app.main:app ^
-    --host 0.0.0.0 ^
+    --host 127.0.0.1 ^
     --port 8000 ^
     --ssl-keyfile=certs/key.pem ^
     --ssl-certfile=certs/cert.pem ^
