@@ -117,6 +117,11 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    aad_sender = Column(String, nullable=False)
+    aad_receiver = Column(String, nullable=False)
+    aad_counter = Column(Integer, nullable=False, index=True)
+    aad_conversation_tag = Column(String, nullable=False)
+    aad_ttl_seconds = Column(Integer, nullable=True)
     ciphertext_json = Column(String, nullable=False)
     status = Column(String, default=MessageStatus.SENT.value, nullable=False)
     is_read = Column(Boolean, default=False, nullable=False)
@@ -125,3 +130,7 @@ class Message(Base):
     read_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     destroyed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("sender_id", "receiver_id", "aad_counter", name="uq_message_sender_receiver_counter"),
+    )
