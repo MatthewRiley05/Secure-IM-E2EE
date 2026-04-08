@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from secrets import token_urlsafe
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,7 +27,7 @@ router = APIRouter()
 
 
 def cleanup_expired_sessions(db: Session) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expired_sessions = db.query(SessionToken).filter(SessionToken.expires_at < now).all()
     for session in expired_sessions:
         db.delete(session)
@@ -94,7 +94,7 @@ def login_user(user: UserLogin, db: Session = Depends(get_db)):
     if not verify_otp_code(db_user.otp_secret, user.otp_code):
         raise HTTPException(status_code=401, detail="Invalid OTP code")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     expired_sessions = db.query(SessionToken).filter(SessionToken.expires_at < now).all()
     for session in expired_sessions:

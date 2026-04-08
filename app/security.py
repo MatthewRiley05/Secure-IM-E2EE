@@ -1,5 +1,5 @@
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pyotp
 from fastapi import HTTPException
@@ -33,7 +33,7 @@ def build_otp_uri(secret: str, username: str, issuer: str = "IMServer") -> str:
 
 
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=window_seconds)
 
     timestamps = rate_limit_store[key]

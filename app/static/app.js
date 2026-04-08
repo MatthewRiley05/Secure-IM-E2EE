@@ -165,7 +165,7 @@ async function fetchContactKey(contactUsername) {
   return { ...result, warning: false };
 }
 
-async function encryptForContact(contact, plaintext) {
+async function encryptForContact(contact, plaintext, ttlSeconds = null) {
   const keyData = E2EE.loadKeypairLocally(state.currentUser);
   if (!keyData) {
     throw new Error("No local keypair found — please log in again");
@@ -185,6 +185,8 @@ async function encryptForContact(contact, plaintext) {
     sender: state.currentUser,
     receiver: contact,
     counter: counter,
+    conversation: context,
+    ttl_seconds: ttlSeconds,
     timestamp: Date.now(),
   };
 
@@ -396,7 +398,7 @@ async function sendChatMessage() {
     ttlSeconds = parsed;
   }
 
-  const { encrypted, warning } = await encryptForContact(state.activeChatUser, plaintext);
+  const { encrypted, warning } = await encryptForContact(state.activeChatUser, plaintext, ttlSeconds);
   if (warning) {
     setSystemMessage(`WARNING: ${state.activeChatUser}'s key has changed`);
   }
