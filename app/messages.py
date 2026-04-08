@@ -1,8 +1,9 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_session
@@ -19,6 +20,59 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+def build_conversation_tag(user_a: str, user_b: str) -> str:
+    left, right = sorted([user_a, user_b])
+    return f"e2ee:{left}:{right}"
+
+
+def validate_ciphertext_payload(
+    ciphertext: dict,
+    sender_username: str,
+    receiver_username: str,
+    ttl_seconds: int | None,
+) -> tuple[int, str, int | None]:
+    if not isinstance(ciphertext, dict):
+        raise HTTPException(status_code=422, detail="ciphertext must be an object")
+
+    raw_ciphertext = ciphertext.get("ciphertext")
+    raw_iv = ciphertext.get("iv")
+    metadata = ciphertext.get("metadata")
+
+    if not isinstance(raw_ciphertext, str) or not raw_ciphertext:
+        raise HTTPException(status_code=422, detail="ciphertext.ciphertext must be a non-empty string")
+    if not isinstance(raw_iv, str) or not raw_iv:
+        raise HTTPException(status_code=422, detail="ciphertext.iv must be a non-empty string")
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=422, detail="ciphertext.metadata must be an object")
+
+    aad_sender = metadata.get("sender")
+    aad_receiver = metadata.get("receiver")
+    aad_counter = metadata.get("counter")
+    aad_conversation_tag = metadata.get("conversation")
+    aad_ttl_seconds = metadata.get("ttl_seconds")
+
+    if aad_sender != sender_username:
+        raise HTTPException(status_code=422, detail="ciphertext.metadata.sender mismatch")
+    if aad_receiver != receiver_username:
+        raise HTTPException(status_code=422, detail="ciphertext.metadata.receiver mismatch")
+    if not isinstance(aad_counter, int) or aad_counter < 1:
+        raise HTTPException(status_code=422, detail="ciphertext.metadata.counter must be a positive integer")
+
+    expected_tag = build_conversation_tag(sender_username, receiver_username)
+    if aad_conversation_tag != expected_tag:
+        raise HTTPException(status_code=422, detail="ciphertext.metadata.conversation mismatch")
+
+    if ttl_seconds is None and aad_ttl_seconds is not None:
+        raise HTTPException(status_code=422, detail="ciphertext.metadata.ttl_seconds must be null when ttl_seconds is not set")
+    if ttl_seconds is not None:
+        if not isinstance(aad_ttl_seconds, int):
+            raise HTTPException(status_code=422, detail="ciphertext.metadata.ttl_seconds must be an integer")
+        if aad_ttl_seconds != ttl_seconds:
+            raise HTTPException(status_code=422, detail="ciphertext.metadata.ttl_seconds mismatch")
+
+    return aad_counter, expected_tag, aad_ttl_seconds
 
 
 def get_authenticated_user(
@@ -90,7 +144,7 @@ def get_or_create_conversation(user_id: int, other_id: int, db: Session) -> Conv
 
 
 def cleanup_expired_messages(db: Session) -> int:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expired_messages = db.query(Message).filter(
         Message.destroyed_at.is_(None),
         Message.expires_at.is_not(None),
@@ -162,9 +216,24 @@ def send_message(
     if not are_friends(user.id, receiver.id, db):
         raise HTTPException(status_code=403, detail="You must be friends to message this user")
 
+    aad_counter, aad_conversation_tag, aad_ttl_seconds = validate_ciphertext_payload(
+        data.ciphertext,
+        sender_username=user.username,
+        receiver_username=receiver.username,
+        ttl_seconds=data.ttl_seconds,
+    )
+
+    duplicate = db.query(Message).filter(
+        Message.sender_id == user.id,
+        Message.receiver_id == receiver.id,
+        Message.aad_counter == aad_counter,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Replay or duplicate message counter detected")
+
     conversation = get_or_create_conversation(user.id, receiver.id, db)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expires_at = None
     if data.ttl_seconds:
         expires_at = now + timedelta(seconds=data.ttl_seconds)
@@ -173,6 +242,11 @@ def send_message(
         conversation_id=conversation.id,
         sender_id=user.id,
         receiver_id=receiver.id,
+        aad_sender=user.username,
+        aad_receiver=receiver.username,
+        aad_counter=aad_counter,
+        aad_conversation_tag=aad_conversation_tag,
+        aad_ttl_seconds=aad_ttl_seconds,
         ciphertext_json=json.dumps(data.ciphertext),
         status=MessageStatus.SENT.value,
         expires_at=expires_at,
@@ -185,7 +259,11 @@ def send_message(
         conversation.user2_unread += 1
     conversation.updated_at = now
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Replay or duplicate message counter detected")
     db.refresh(message)
 
     return SendMessageResponse(
@@ -229,7 +307,7 @@ def get_conversation_messages(
         .all()
     )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     delivered_changed = False
     read_changed = False
 
@@ -277,7 +355,7 @@ def get_pending_messages(
     if not pending:
         return PendingMessageResponse(messages=[], total=0)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for msg in pending:
         msg.status = MessageStatus.DELIVERED.value
         msg.delivered_at = now
@@ -308,7 +386,7 @@ def mark_conversation_read(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     unread_messages = db.query(Message).filter(
         Message.conversation_id == conversation.id,
         Message.receiver_id == user.id,

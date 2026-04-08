@@ -177,3 +177,36 @@ node --check app/static/app.js
 - Chat `Close` button clears only the active UI chat state.
 - Message-row `Copy` copies exactly the text shown in that row.
 - Message-row `Delete` is UI-only (removes from current view state, not server/database).
+
+## Security Semantics
+
+- Delivered semantics (Option B): `delivered` is set when the recipient client fetches via `/messages/inbox/pending` or `/messages/conversation/{username}`.
+- Metadata disclosure: the server can observe sender/receiver identifiers, message timing, queue length, delivery/read timing, and ciphertext sizes; it cannot decrypt message plaintext.
+- Replay/duplicate protection: server rejects duplicate `(sender, receiver, counter)` and client also performs local replay checks.
+- TTL binding: `ttl_seconds` must match `ciphertext.metadata.ttl_seconds`; mismatches are rejected.
+
+## TLS Deployment Requirement
+
+Run the API behind HTTPS in deployment. One simple local example is reverse-proxying uvicorn with TLS termination.
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Example nginx TLS proxy snippet:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.example;
+
+    ssl_certificate /path/fullchain.pem;
+    ssl_certificate_key /path/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
